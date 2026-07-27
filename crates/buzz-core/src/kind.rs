@@ -390,6 +390,12 @@ pub const KIND_JOB_RESULT: u32 = 43004;
 pub const KIND_JOB_CANCEL: u32 = 43005;
 /// An agent job failed with an error.
 pub const KIND_JOB_ERROR: u32 = 43006;
+/// Reviewer verdict on a submitted job result (`approve` / `request_changes`).
+pub const KIND_JOB_REVIEW: u32 = 43007;
+/// Bounty released to the agent for an approved job result.
+pub const KIND_JOB_PAYMENT: u32 = 43008;
+/// Credit mint to a pubkey — only trusted treasury keys are honored by clients.
+pub const KIND_LEDGER_TOPUP: u32 = 43010;
 
 /// Relay-signed notification: the target pubkey was added to a channel.
 /// Stored globally (channel_id = None) with p-tag = target, h-tag = channel UUID.
@@ -575,6 +581,9 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_JOB_RESULT,
     KIND_JOB_CANCEL,
     KIND_JOB_ERROR,
+    KIND_JOB_REVIEW,
+    KIND_JOB_PAYMENT,
+    KIND_LEDGER_TOPUP,
     KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,
