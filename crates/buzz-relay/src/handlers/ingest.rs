@@ -37,6 +37,7 @@ use buzz_core::kind::{
     KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE,
     RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
+use buzz_core::kind::{KIND_CHECKLIST_TOGGLE, KIND_TASK_COMMENT};
 use buzz_core::tenant::TenantContext;
 use buzz_core::verification::verify_event;
 use buzz_core::CommunityId;
@@ -302,13 +303,13 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_DM_OPEN | KIND_DM_ADD_MEMBER | KIND_DM_HIDE => Ok(Scope::MessagesWrite),
         KIND_WORKFLOW_DEF | KIND_WORKFLOW_TRIGGER => Ok(Scope::MessagesWrite),
         KIND_APPROVAL_GRANT | KIND_APPROVAL_DENY => Ok(Scope::MessagesWrite),
-        // Agent job / task-marketplace protocol (43001–43010): global events,
+        // Agent job / task-marketplace protocol (43001–43012): global events,
         // relay-member authored. Role rules (poster-only review/payment,
         // treasury-only topup) are enforced client-side by the task-layer
         // reducer — the relay only gates transport scope.
         KIND_JOB_REQUEST | KIND_JOB_ACCEPTED | KIND_JOB_PROGRESS | KIND_JOB_RESULT
         | KIND_JOB_CANCEL | KIND_JOB_ERROR | KIND_JOB_REVIEW | KIND_JOB_PAYMENT
-        | KIND_LEDGER_TOPUP => Ok(Scope::JobsWrite),
+        | KIND_LEDGER_TOPUP | KIND_TASK_COMMENT | KIND_CHECKLIST_TOGGLE => Ok(Scope::JobsWrite),
         _ => Err("restricted: unknown event kind"),
     }
 }

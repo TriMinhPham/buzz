@@ -396,6 +396,10 @@ pub const KIND_JOB_REVIEW: u32 = 43007;
 pub const KIND_JOB_PAYMENT: u32 = 43008;
 /// Credit mint to a pubkey — only trusted treasury keys are honored by clients.
 pub const KIND_LEDGER_TOPUP: u32 = 43010;
+/// A comment on a Hive task.
+pub const KIND_TASK_COMMENT: u32 = 43011;
+/// A checklist item was toggled on a Hive task.
+pub const KIND_CHECKLIST_TOGGLE: u32 = 43012;
 
 /// Relay-signed notification: the target pubkey was added to a channel.
 /// Stored globally (channel_id = None) with p-tag = target, h-tag = channel UUID.
@@ -584,6 +588,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_JOB_REVIEW,
     KIND_JOB_PAYMENT,
     KIND_LEDGER_TOPUP,
+    KIND_TASK_COMMENT,
+    KIND_CHECKLIST_TOGGLE,
     KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,
