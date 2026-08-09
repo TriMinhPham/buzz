@@ -1917,13 +1917,16 @@ async fn ingest_event_inner(
             let state = Arc::clone(state);
             let tenant = tenant.clone();
             let leaver = event.pubkey.to_bytes().to_vec();
-            let leave_event_id = event_id_hex.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                // Synthetic all-zero id for the disconnect's OK-false reason
+                // frame, like the ban path: labelling it with the leave event
+                // id would contradict the OK-true acknowledgement already
+                // sent for that id.
                 state.disconnect_pubkey_clusterwide(
                     &tenant,
                     &leaver,
-                    &leave_event_id,
+                    &"0".repeat(64),
                     "restricted: you have left this relay",
                 );
             });
