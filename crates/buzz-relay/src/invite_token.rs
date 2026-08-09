@@ -22,7 +22,7 @@
 //! ## Key derivation
 //!
 //! The HMAC key is derived from the relay's signing secret key:
-//! `key = sha256(relay_secret_key_bytes || "buzz-invite-v1")`. Rotating the
+//! `key = sha256(relay_secret_key_bytes || "buzz-invite-v2")`. Rotating the
 //! relay keypair therefore invalidates all outstanding invites, which is the
 //! intended blast-radius control for a leaked link.
 //!
@@ -62,7 +62,13 @@ pub const MAX_INVITE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_CODE_LEN: usize = 1024;
 
 /// Domain-separation label mixed into the HMAC key derivation.
-const KEY_DERIVATION_LABEL: &[u8] = b"buzz-invite-v1";
+///
+/// v2 (single-use ledger era): v1 codes could be redeemed before the
+/// `relay_invite_claims` ledger existed, leaving no consumption record — an
+/// unexpired, already-redeemed v1 code would pass the new handler as a first
+/// claim. Bumping the label invalidates every pre-ledger code (claimed or
+/// not), so the single-use guarantee holds from the first post-upgrade mint.
+const KEY_DERIVATION_LABEL: &[u8] = b"buzz-invite-v2";
 
 /// The signed payload carried inside an invite code.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]

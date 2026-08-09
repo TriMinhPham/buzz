@@ -279,9 +279,12 @@ pub async fn handle_relay_admin_event(
             //
             // Known limits (shared with the ban path, tracked for follow-up):
             // sessions NIP-OA-delegated *through* the removed owner are not
-            // matched (the registry indexes only the authed agent pubkey), and
-            // the cross-pod half is fire-and-forget with the deleted row as
-            // the durable backstop at next AUTH.
+            // matched (the registry indexes only the authed agent pubkey),
+            // active huddle *audio* sockets are not reached (the audio
+            // handler checks membership only at its own auth and registers no
+            // pubkey-indexed handle), and the cross-pod half is
+            // fire-and-forget with the deleted row as the durable backstop at
+            // next AUTH.
             if let Ok(target_bytes) = hex::decode(&target_hex) {
                 state.disconnect_pubkey_clusterwide(
                     tenant,
