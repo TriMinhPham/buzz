@@ -1905,6 +1905,16 @@ async fn ingest_event_inner(
 
         info!(pubkey = %sender_hex, "relay member left via NIP-43 leave request");
 
+        // Live enforcement, mirroring admin removal (kind 9031) and the
+        // moderation ban path: leaving ends the member's other open sessions
+        // now instead of letting them read until their sockets happen to drop.
+        state.disconnect_pubkey_clusterwide(
+            tenant,
+            &event.pubkey.to_bytes(),
+            &event_id_hex,
+            "restricted: you have left this relay",
+        );
+
         return Ok(IngestResult {
             event_id: event_id_hex,
             accepted: true,

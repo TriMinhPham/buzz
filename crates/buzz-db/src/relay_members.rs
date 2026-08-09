@@ -114,19 +114,75 @@ pub async fn add_relay_member(
     Ok(result.rows_affected() > 0)
 }
 
+/// Outcome of presenting an invite code (see [`claim_relay_membership`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteClaimOutcome {
+    /// The nonce was consumed and membership was inserted.
+    Joined,
+    /// The presenter is already a member — either the nonce was fresh (a
+    /// member presenting a new code) or this is the idempotent retry of the
+    /// presenter's own earlier claim.
+    AlreadyMember,
+    /// The code was already spent by someone else, or by a former member who
+    /// has since been removed. The presenter was not admitted.
+    CodeAlreadyUsed,
+}
+
 /// Claims relay membership via an invite and atomically persists policy evidence.
 ///
-/// Returns `true` when membership was inserted, or `false` when the pubkey was
-/// already a member. A configured `policy_version` is recorded in the same
-/// transaction, so membership cannot be granted without its acceptance record.
+/// Codes are single-use: the invite's `nonce` is consumed in the same
+/// transaction as the membership insert. A configured `policy_version` is
+/// recorded transactionally too, so membership cannot be granted without its
+/// acceptance record.
 pub async fn claim_relay_membership(
     pool: &PgPool,
     community: CommunityId,
     pubkey: &str,
     role: &str,
+    invite_nonce: &str,
     policy_version: Option<&str>,
-) -> Result<bool> {
+) -> Result<InviteClaimOutcome> {
     let mut tx = pool.begin().await?;
+
+    // Consume the invite's nonce first — codes are single-use. A conflict
+    // means the code was already presented; that is only acceptable as the
+    // idempotent retry case (same pubkey, still a member).
+    let consumed = sqlx::query(
+        "INSERT INTO relay_invite_claims (community_id, nonce, claimed_by) \
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (community_id, nonce) DO NOTHING",
+    )
+    .bind(community.as_uuid())
+    .bind(invite_nonce)
+    .bind(pubkey)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
+
+    if !consumed {
+        let prior_claimer: Option<String> = sqlx::query(
+            "SELECT claimed_by FROM relay_invite_claims \
+             WHERE community_id = $1 AND nonce = $2",
+        )
+        .bind(community.as_uuid())
+        .bind(invite_nonce)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|row| row.get("claimed_by"));
+
+        let retry_by_same_member = prior_claimer.as_deref() == Some(pubkey)
+            && is_relay_member(pool, community, pubkey).await?;
+        tx.rollback().await?;
+        // A removed ex-member re-presenting their old code is a fresh
+        // admission attempt, not a retry — the code stays spent.
+        return Ok(if retry_by_same_member {
+            InviteClaimOutcome::AlreadyMember
+        } else {
+            InviteClaimOutcome::CodeAlreadyUsed
+        });
+    }
+
     let inserted = sqlx::query(
         "INSERT INTO relay_members (community_id, pubkey, role, added_by) \
          VALUES ($1, $2, $3, 'invite') \
@@ -153,7 +209,11 @@ pub async fn claim_relay_membership(
     }
 
     tx.commit().await?;
-    Ok(inserted)
+    Ok(if inserted {
+        InviteClaimOutcome::Joined
+    } else {
+        InviteClaimOutcome::AlreadyMember
+    })
 }
 
 /// Returns whether a member has persisted acceptance evidence for a policy version.
@@ -614,10 +674,18 @@ mod tests {
         let legacy_member = test_pubkey();
         let version = "a".repeat(64);
 
-        assert!(
-            claim_relay_membership(&pool, community, &policy_member, "member", Some(&version),)
-                .await
-                .expect("claim membership with policy")
+        assert_eq!(
+            claim_relay_membership(
+                &pool,
+                community,
+                &policy_member,
+                "member",
+                "nonce-policy-claim",
+                Some(&version),
+            )
+            .await
+            .expect("claim membership with policy"),
+            InviteClaimOutcome::Joined
         );
         assert!(
             has_join_policy_acceptance(&pool, community, &policy_member, &version)
@@ -625,15 +693,70 @@ mod tests {
                 .expect("policy acceptance lookup")
         );
 
-        assert!(
-            claim_relay_membership(&pool, community, &legacy_member, "member", None)
+        assert_eq!(
+            claim_relay_membership(&pool, community, &legacy_member, "member", "nonce-legacy", None)
                 .await
-                .expect("legacy claim membership")
+                .expect("legacy claim membership"),
+            InviteClaimOutcome::Joined
         );
         assert!(
             !has_join_policy_acceptance(&pool, community, &legacy_member, &version)
                 .await
                 .expect("legacy acceptance lookup")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn invite_codes_are_single_use() {
+        let pool = setup_pool().await;
+        let community = make_test_community(&pool).await;
+        let first = test_pubkey();
+        let second = test_pubkey();
+
+        assert_eq!(
+            claim_relay_membership(&pool, community, &first, "member", "nonce-1", None)
+                .await
+                .expect("first claim"),
+            InviteClaimOutcome::Joined
+        );
+        // Idempotent retry by the same (still-current) member.
+        assert_eq!(
+            claim_relay_membership(&pool, community, &first, "member", "nonce-1", None)
+                .await
+                .expect("retry claim"),
+            InviteClaimOutcome::AlreadyMember
+        );
+        // A different pubkey presenting the spent code is refused admission.
+        assert_eq!(
+            claim_relay_membership(&pool, community, &second, "member", "nonce-1", None)
+                .await
+                .expect("second pubkey on spent code"),
+            InviteClaimOutcome::CodeAlreadyUsed
+        );
+        assert!(
+            !is_relay_member(&pool, community, &second)
+                .await
+                .expect("second membership lookup")
+        );
+
+        // A removed ex-member re-presenting their old code is not re-admitted.
+        assert_eq!(
+            remove_relay_member(&pool, community, &first)
+                .await
+                .expect("remove first member"),
+            RemoveResult::Removed
+        );
+        assert_eq!(
+            claim_relay_membership(&pool, community, &first, "member", "nonce-1", None)
+                .await
+                .expect("ex-member on spent code"),
+            InviteClaimOutcome::CodeAlreadyUsed
+        );
+        assert!(
+            !is_relay_member(&pool, community, &first)
+                .await
+                .expect("ex-member membership lookup")
         );
     }
 

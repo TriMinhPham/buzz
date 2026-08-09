@@ -2,8 +2,10 @@
 //!
 //! An invite code is a compact, URL-safe, HMAC-signed blob minted by a relay
 //! admin/owner and later presented by a joining user. The relay verifies the
-//! signature and expiry, then inserts the presenter into `relay_members` —
-//! no server-side invite storage is required.
+//! signature and expiry, then inserts the presenter into `relay_members`.
+//! The token itself is stateless; only its *consumption* is recorded (the
+//! `relay_invite_claims` table keyed by the payload nonce), which makes codes
+//! single-use.
 //!
 //! ## Format
 //!
@@ -26,17 +28,18 @@
 //!
 //! ## Security properties (and non-properties)
 //!
-//! - Codes are **multi-use until expiry** — there is no server-side "used"
-//!   bit. Default expiry is deliberately short ([`DEFAULT_INVITE_TTL_SECS`]).
+//! - Codes are **single-use**: the payload nonce is consumed transactionally
+//!   on the first successful claim (`relay_invite_claims`), so a leaked or
+//!   shared code admits at most one key. Expiry additionally bounds the
+//!   window ([`DEFAULT_INVITE_TTL_SECS`]).
 //! - Codes are **community-scoped**: a code minted for community A fails
 //!   verification when presented to community B, even on the same deployment.
 //! - Codes are **role-capped at `member`** at mint time (enforced by the mint
 //!   route, and re-checked here on verify so a hand-crafted payload with an
 //!   elevated role is rejected even if it carries a valid MAC from a future
 //!   buggy caller).
-//! - Revocation is coarse: rotate the relay keypair, or remove the member
-//!   after the fact. Per-code revocation requires the future `relay_invites`
-//!   table increment.
+//! - Revocation of an *unclaimed* code is coarse: rotate the relay keypair,
+//!   or remove the member after the fact. A claimed code is already spent.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;

@@ -223,6 +223,25 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
             .await
             {
                 Ok(owner) => owner,
+                Err((status, body)) if status.is_server_error() => {
+                    // A membership *lookup* failure (e.g. database briefly
+                    // unavailable) is not a denial. Clients treat "restricted:"
+                    // as identity-terminal and stop reconnecting, so a
+                    // transient outage must answer with the retryable
+                    // "error:" prefix instead — mirroring the ban seam's
+                    // DbError arm above.
+                    warn!(conn_id = %conn_id, pubkey = %pubkey.to_hex(), error = ?body,
+                          "relay membership lookup errored (transient)");
+                    metrics::counter!("buzz_auth_failures_total", "reason" => "membership_check_error")
+                        .increment(1);
+                    *conn.auth_state.write().await = AuthState::Failed;
+                    conn.send(RelayMessage::ok(
+                        &event_id_hex,
+                        false,
+                        "error: internal error checking membership",
+                    ));
+                    return;
+                }
                 Err(e) => {
                     warn!(conn_id = %conn_id, pubkey = %pubkey.to_hex(), error = ?e, "not a relay member");
                     metrics::counter!("buzz_auth_failures_total", "reason" => "not_relay_member")

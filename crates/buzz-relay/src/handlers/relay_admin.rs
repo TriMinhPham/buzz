@@ -271,6 +271,20 @@ pub async fn handle_relay_admin_event(
                 "relay member removed"
             );
 
+            // Live enforcement, mirroring the moderation ban path: revocation
+            // must end open sessions now, not whenever the socket next drops —
+            // a removed member with a live subscription would otherwise keep
+            // reading (and writing) until reconnect. `target_hex` was validated
+            // as 64 hex chars by `extract_p_tag_hex`, so decode cannot fail.
+            if let Ok(target_bytes) = hex::decode(&target_hex) {
+                state.disconnect_pubkey_clusterwide(
+                    tenant,
+                    &target_bytes,
+                    &event.id.to_hex(),
+                    "restricted: relay membership revoked",
+                );
+            }
+
             if let Err(e) = publish_nip43_member_removed(tenant, state, &target_hex).await {
                 warn!(error = %e, "failed to publish NIP-43 member removed event");
             }

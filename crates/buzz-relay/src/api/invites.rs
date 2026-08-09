@@ -327,12 +327,13 @@ pub async fn claim_invite(
             .map_err(|_| api_error(StatusCode::FORBIDDEN, "join_policy_required"))?;
     }
 
-    let was_inserted = state
+    let outcome = state
         .db
         .claim_relay_membership(
             tenant.community(),
             &claimer_hex,
             &payload.r,
+            &payload.n,
             state
                 .config
                 .join_policy
@@ -341,6 +342,13 @@ pub async fn claim_invite(
         )
         .await
         .map_err(|e| internal_error(&format!("invite claim insert: {e}")))?;
+
+    // Post-MAC, like invite_expired: only holders of a genuinely minted code
+    // ever see this, so the distinct reason helps UX without aiding forgery.
+    if outcome == buzz_db::relay_members::InviteClaimOutcome::CodeAlreadyUsed {
+        return Err(api_error(StatusCode::FORBIDDEN, "invite_used"));
+    }
+    let was_inserted = outcome == buzz_db::relay_members::InviteClaimOutcome::Joined;
 
     if was_inserted {
         tracing::info!(
