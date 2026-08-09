@@ -1908,29 +1908,21 @@ async fn ingest_event_inner(
         // Live enforcement, mirroring admin removal (kind 9031) and the
         // moderation ban path: leaving ends the member's open sessions now
         // instead of letting them read until their sockets happen to drop.
-        // Deferred a moment so the "OK true" acknowledgement below reaches
-        // the initiating socket before the disconnect closes it — an inline
-        // call would cancel the send loop first and misreport the leave as
-        // rejected. Membership is already deleted, so a reconnect inside the
-        // window fails AUTH regardless.
-        {
-            let state = Arc::clone(state);
-            let tenant = tenant.clone();
-            let leaver = event.pubkey.to_bytes().to_vec();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                // Synthetic all-zero id for the disconnect's OK-false reason
-                // frame, like the ban path: labelling it with the leave event
-                // id would contradict the OK-true acknowledgement already
-                // sent for that id.
-                state.disconnect_pubkey_clusterwide(
-                    &tenant,
-                    &leaver,
-                    &"0".repeat(64),
-                    "restricted: you have left this relay",
-                );
-            });
-        }
+        // Inline and immediate — a deferred disconnect would open a window
+        // where a re-admitted key's fresh session gets killed, and no fixed
+        // delay can guarantee ACK ordering anyway. The trade-off: the
+        // event's own "OK true" may not reach the initiating socket before
+        // the close, but the disconnect's reason frame (synthetic all-zero
+        // id, like the ban path, so it never contradicts the event's ACK)
+        // rides the prioritized control channel and tells the client
+        // explicitly why the socket dropped. The leave itself is already
+        // durably committed either way.
+        state.disconnect_pubkey_clusterwide(
+            tenant,
+            &event.pubkey.to_bytes(),
+            &"0".repeat(64),
+            "restricted: you have left this relay",
+        );
 
         return Ok(IngestResult {
             event_id: event_id_hex,
