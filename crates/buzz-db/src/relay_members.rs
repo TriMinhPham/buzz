@@ -171,8 +171,16 @@ pub async fn claim_relay_membership(
         .await?
         .map(|row| row.get("claimed_by"));
 
+        // Membership check runs on the transaction's connection — grabbing a
+        // second pool connection here could exhaust the pool under concurrent
+        // claims of a spent code.
         let retry_by_same_member = prior_claimer.as_deref() == Some(pubkey)
-            && is_relay_member(pool, community, pubkey).await?;
+            && sqlx::query("SELECT 1 FROM relay_members WHERE community_id = $1 AND pubkey = $2")
+                .bind(community.as_uuid())
+                .bind(pubkey)
+                .fetch_optional(&mut *tx)
+                .await?
+                .is_some();
         tx.rollback().await?;
         // A removed ex-member re-presenting their old code is a fresh
         // admission attempt, not a retry — the code stays spent.

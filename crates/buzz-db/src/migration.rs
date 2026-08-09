@@ -560,7 +560,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 24);
+        assert_eq!(migrations.len(), 25);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -872,6 +872,12 @@ mod tests {
             .contains("CREATE OR REPLACE FUNCTION refresh_channel_ttl_after_event_insert"));
         assert!(ttl_shared.contains("pg_advisory_xact_lock_shared"));
         assert!(ttl_shared.contains("'buzz_channel_ttl:' || NEW.community_id::text"));
+
+        // Single-use invites: consumption ledger keyed by the payload nonce.
+        assert_eq!(migrations[24].version, 25);
+        let invite_claims = migrations[24].sql.as_str();
+        assert!(invite_claims.contains("CREATE TABLE relay_invite_claims"));
+        assert!(invite_claims.contains("PRIMARY KEY (community_id, nonce)"));
         // The row read must be a bare SELECT (comments describe the removed
         // FOR UPDATE; the executable body must not reintroduce it).
         assert!(ttl_shared.contains("SELECT ttl_seconds INTO channel_ttl"));
@@ -1121,7 +1127,7 @@ mod tests {
         run_migrations(&pool)
             .await
             .expect("retry succeeds after operator repair");
-        assert_eq!(applied_versions(&pool).await.last().copied(), Some(24));
+        assert_eq!(applied_versions(&pool).await.last().copied(), Some(25));
     }
 
     #[tokio::test]

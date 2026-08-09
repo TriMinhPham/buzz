@@ -1906,14 +1906,28 @@ async fn ingest_event_inner(
         info!(pubkey = %sender_hex, "relay member left via NIP-43 leave request");
 
         // Live enforcement, mirroring admin removal (kind 9031) and the
-        // moderation ban path: leaving ends the member's other open sessions
-        // now instead of letting them read until their sockets happen to drop.
-        state.disconnect_pubkey_clusterwide(
-            tenant,
-            &event.pubkey.to_bytes(),
-            &event_id_hex,
-            "restricted: you have left this relay",
-        );
+        // moderation ban path: leaving ends the member's open sessions now
+        // instead of letting them read until their sockets happen to drop.
+        // Deferred a moment so the "OK true" acknowledgement below reaches
+        // the initiating socket before the disconnect closes it — an inline
+        // call would cancel the send loop first and misreport the leave as
+        // rejected. Membership is already deleted, so a reconnect inside the
+        // window fails AUTH regardless.
+        {
+            let state = Arc::clone(state);
+            let tenant = tenant.clone();
+            let leaver = event.pubkey.to_bytes().to_vec();
+            let leave_event_id = event_id_hex.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                state.disconnect_pubkey_clusterwide(
+                    &tenant,
+                    &leaver,
+                    &leave_event_id,
+                    "restricted: you have left this relay",
+                );
+            });
+        }
 
         return Ok(IngestResult {
             event_id: event_id_hex,
