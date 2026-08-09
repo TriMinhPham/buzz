@@ -268,7 +268,11 @@ String _communityNameFromClaim(Map<String, dynamic> claim, String relayUrl) {
 }
 
 bool _requiresFreshInvite(Object error) {
-  return error.toString().contains('join_policy_required');
+  final message = error.toString();
+  // invite_used: the code was redeemed by another identity — retrying with
+  // any key can never succeed, so keep the Join button disabled.
+  return message.contains('join_policy_required') ||
+      message.contains('invite_used');
 }
 
 String _friendlyInviteError(Object error) {

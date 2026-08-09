@@ -298,6 +298,40 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
             state
                 .conn_manager
                 .set_authenticated_pubkey(conn_id, pubkey.to_bytes().to_vec());
+
+            // Close the removal race: a kind-9031 removal (or NIP-43 leave)
+            // that committed after the membership gate above but before the
+            // registry write scanned the registry while this connection was
+            // still invisible, so its live disconnect missed us. Registering
+            // first and re-validating here means every interleaving is
+            // caught by one side or the other. Lookup errors fail open — the
+            // primary gate already passed, and the deleted row still denies
+            // the next AUTH.
+            if state.config.require_relay_membership {
+                if let Err((status, _)) = crate::api::relay_members::enforce_relay_membership(
+                    &state,
+                    conn.tenant.community(),
+                    pubkey.as_bytes(),
+                    auth_tag_json.as_deref(),
+                )
+                .await
+                {
+                    if !status.is_server_error() {
+                        warn!(conn_id = %conn_id, pubkey = %pubkey.to_hex(),
+                              "membership revoked during authentication");
+                        metrics::counter!("buzz_auth_failures_total", "reason" => "revoked_during_auth")
+                            .increment(1);
+                        *conn.auth_state.write().await = AuthState::Failed;
+                        conn.send(RelayMessage::ok(
+                            &event_id_hex,
+                            false,
+                            "restricted: not a relay member",
+                        ));
+                        return;
+                    }
+                }
+            }
+
             conn.send(RelayMessage::ok(&event_id_hex, true, ""));
         }
         Err(e) => {
