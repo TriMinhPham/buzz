@@ -1909,14 +1909,20 @@ async fn ingest_event_inner(
         // moderation ban path: leaving ends the member's open sessions now
         // instead of letting them read until their sockets happen to drop.
         // Inline and immediate — a deferred disconnect would open a window
-        // where a re-admitted key's fresh session gets killed, and no fixed
-        // delay can guarantee ACK ordering anyway. The trade-off: the
-        // event's own "OK true" may not reach the initiating socket before
-        // the close, but the disconnect's reason frame (synthetic all-zero
-        // id, like the ban path, so it never contradicts the event's ACK)
-        // rides the prioritized control channel and tells the client
-        // explicitly why the socket dropped. The leave itself is already
-        // durably committed either way.
+        // where a re-admitted key's fresh session gets killed. For a leave
+        // submitted over WebSocket, the caller's data-path acknowledgement
+        // would lose the race against the close, so queue the success ACK on
+        // the prioritized control channel first; the disconnect's own reason
+        // frame uses the synthetic all-zero id (like the ban path) so it
+        // never contradicts that ACK. A duplicate OK-true from the data path
+        // is harmless if it wins the race.
+        if let IngestAuth::Nip42 { conn_id, .. } = &auth {
+            state.conn_manager.send_control_ok(
+                *conn_id,
+                &event_id_hex,
+                "info: you have left this relay",
+            );
+        }
         state.disconnect_pubkey_clusterwide(
             tenant,
             &event.pubkey.to_bytes(),

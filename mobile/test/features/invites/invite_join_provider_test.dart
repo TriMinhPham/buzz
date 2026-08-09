@@ -239,6 +239,61 @@ void main() {
     );
     expect(auth.authenticatedCommunities, hasLength(1));
   });
+
+  test('retry after an ambiguous failure reuses the pending key', () async {
+    // Codes are single-use server-side: a retry that regenerated its key
+    // would hit invite_used and strand the key the first attempt admitted.
+    var generatedKeys = 0;
+    var attempts = 0;
+    final storage = CommunityStorage(secure: FakeSecureStorage());
+    final auth = _RecordingAuthNotifier();
+    final container = ProviderContainer(
+      overrides: [
+        communityStorageProvider.overrideWithValue(storage),
+        authProvider.overrideWith(() => auth),
+        inviteKeyGeneratorProvider.overrideWithValue(() {
+          generatedKeys++;
+          return nostr.Keys.generate();
+        }),
+        inviteJoinHttpClientProvider.overrideWithValue(
+          http_testing.MockClient((request) async {
+            attempts++;
+            if (attempts == 1) {
+              // The claim may have committed server-side; the response is lost.
+              return http.Response(jsonEncode({'error': 'temporary'}), 503);
+            }
+            return http.Response(
+              jsonEncode({
+                'status': 'already_member',
+                'host': 'relay.example.com',
+                'role': 'member',
+              }),
+              200,
+            );
+          }),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container
+        .read(inviteJoinProvider.notifier)
+        .prepare(
+          const InviteDeepLink(
+            relayUrl: 'wss://relay.example.com',
+            code: 'code',
+          ),
+        );
+    await container.read(inviteJoinProvider.notifier).confirmJoin();
+    expect(container.read(inviteJoinProvider).status, InviteJoinStatus.error);
+
+    await container.read(inviteJoinProvider.notifier).confirmJoin();
+
+    expect(container.read(inviteJoinProvider).status, InviteJoinStatus.success);
+    expect(attempts, 2);
+    expect(generatedKeys, 1);
+    expect(auth.authenticatedCommunities, hasLength(1));
+  });
 }
 
 class _RecordingAuthNotifier extends AuthNotifier {

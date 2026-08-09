@@ -318,6 +318,24 @@ impl ConnectionManager {
         closed
     }
 
+    /// Queue a successful `OK` frame for one connection on the prioritized
+    /// control channel. Used when a handler is about to disconnect the very
+    /// connection that submitted the event (NIP-43 self-leave): the normal
+    /// data-path acknowledgement would lose the race against the close, but
+    /// the control channel drains ahead of the cancel branch. Best-effort —
+    /// a full control buffer or an already-gone connection returns `false`.
+    pub fn send_control_ok(&self, conn_id: Uuid, event_id: &str, message: &str) -> bool {
+        if let Some(entry) = self.connections.get(&conn_id) {
+            let frame = crate::protocol::RelayMessage::ok(event_id, true, message);
+            entry
+                .ctrl_tx
+                .try_send(WsMessage::Text(frame.into()))
+                .is_ok()
+        } else {
+            false
+        }
+    }
+
     /// Return the server-resolved community that the connection's host bound to.
     pub fn community_for_conn(&self, conn_id: Uuid) -> Option<CommunityId> {
         self.connections

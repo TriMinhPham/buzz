@@ -64,10 +64,20 @@ class InviteJoinState {
 }
 
 class InviteJoinNotifier extends Notifier<InviteJoinState> {
+  /// Keys generated for the in-progress claim, retained across retries of the
+  /// same invite code. Codes are single-use server-side: if a claim commits
+  /// but the response is lost, retrying with a fresh key would hit
+  /// `invite_used` and strand the admitted key. Reusing the pending key makes
+  /// the retry hit the server's idempotent `already_member` path instead.
+  nostr.Keys? _pendingKeys;
+
   @override
   InviteJoinState build() => const InviteJoinState();
 
   Future<void> prepare(InviteDeepLink invite) async {
+    if (state.invite?.code != invite.code) {
+      _pendingKeys = null;
+    }
     final communities = await ref.read(communityListProvider.future);
     final existing = _existingCommunity(communities, invite.relayUrl);
     if (existing != null) {
@@ -115,7 +125,7 @@ class InviteJoinNotifier extends Notifier<InviteJoinState> {
         return;
       }
 
-      final keys = ref.read(inviteKeyGeneratorProvider)();
+      final keys = _pendingKeys ??= ref.read(inviteKeyGeneratorProvider)();
       final body = jsonEncode({
         'code': invite.code,
         if (invite.policyReceipt != null)
@@ -158,6 +168,7 @@ class InviteJoinNotifier extends Notifier<InviteJoinState> {
       await ref
           .read(authProvider.notifier)
           .authenticateWithCommunity(community);
+      _pendingKeys = null;
       state = state.copyWith(
         status: InviteJoinStatus.success,
         communityName: community.name,
@@ -173,6 +184,7 @@ class InviteJoinNotifier extends Notifier<InviteJoinState> {
   }
 
   void reset() {
+    _pendingKeys = null;
     state = const InviteJoinState();
   }
 }
@@ -262,6 +274,9 @@ bool _requiresFreshInvite(Object error) {
 String _friendlyInviteError(Object error) {
   final message = error.toString();
   if (message.contains('invite_expired')) return 'This invite has expired.';
+  if (message.contains('invite_used')) {
+    return 'This invite has already been used — ask for a fresh one.';
+  }
   if (message.contains('invite_invalid')) return 'This invite is not valid.';
   if (message.contains('join_policy_required')) {
     return 'This invite approval has expired. Re-open the invite link to try again.';
